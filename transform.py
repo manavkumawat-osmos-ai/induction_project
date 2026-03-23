@@ -24,7 +24,7 @@ from typing import Dict, List, Optional
 from dotenv import load_dotenv
 from google import genai
 from google.genai import types
-
+from pipeline import prompt  # from pipeline.py configuration
 # Load environment variables from .env file
 load_dotenv()
 
@@ -39,7 +39,7 @@ INITIAL_BACKOFF = 2              # seconds
 
 INPUT_FEED = "data/product_feed.csv"
 INPUT_QUERIES = "data/keywords.csv"
-PROMPT_FILE = "data/prompt.txt"
+PROMPT_FILE = f"data/{prompt}"
 OUTPUT_FILE = "output/query_category_mapping.tsv"
 PROGRESS_FILE = "output/.mapping_progress.json"  # tracks completed queries for resume
 LLM_RESPONSE_FILE = "output/llm_responses.json"  # saves raw LLM JSON responses
