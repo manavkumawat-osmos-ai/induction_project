@@ -1,0 +1,11 @@
+.env
+__pycache__/
+*.pyc
+.DS_Store
+.venv/
+.vscode/
+data/product_feed.csv
+data/keywords.csv
+output/llm_cache_input.txt
+output/llm_responses.json
+output/query_category_mapping.tsv
