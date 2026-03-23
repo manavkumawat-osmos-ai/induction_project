@@ -20,7 +20,7 @@ RUN_KEYWORDS_QUERY = False          # Set to True to also run KEYWORDS_QUERY
 marketplace_id = "100002"             # Set to appropriate marketplace ID for queries and product feed table
 UPLOAD_TO_S3      = False           # Set to True to upload output to S3
 S3_OUTPUT_PATH    = ""              # e.g. "s3://bucket/path/to/output.tsv.gz"
-prompt="prompt_e-commerce.txt"     # Prompt template for LLM ( needed by transform.py) list=["prompt_e-commerce.txt", "prompt_fashion.txt", "prompt_grocery.txt",prompt_pharmacy.txt"]
+prompt="prompt_e-commerce.txt"     # Prompt template for LLM ( needed by transform.py) list=["prompt_e-commerce.txt", "prompt_fashion.txt", "prompt_grocery.txt", "prompt_pharmacy.txt"]
 
 OUTPUT_DIR        = Path(".")       # Root directory (data/ and output/ live here)
 TRANSFORM_SCRIPT  = Path("transform.py")
