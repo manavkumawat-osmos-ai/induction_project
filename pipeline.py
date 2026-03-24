@@ -16,11 +16,12 @@ from osUtilsV2.log_utils import LogUtils
 # PIPELINE CONFIGURATION  –  edit these before each run
 # ──────────────────────────────────────────────────────────────────────────────
 
-RUN_KEYWORDS_QUERY = False          # Set to True to also run KEYWORDS_QUERY
-marketplace_id = "100002"             # Set to appropriate marketplace ID for queries and product feed table
+RUN_KEYWORDS_QUERY = True         # Set to True to also run KEYWORDS_QUERY
+marketplace_id = 290039             # Set to appropriate marketplace ID for queries and product feed table
 UPLOAD_TO_S3      = False           # Set to True to upload output to S3
-S3_OUTPUT_PATH    = ""              # e.g. "s3://bucket/path/to/output.tsv.gz"
+S3_OUTPUT_PATH    = ""            
 prompt="prompt_e-commerce.txt"     # Prompt template for LLM ( needed by transform.py) list=["prompt_e-commerce.txt", "prompt_fashion.txt", "prompt_grocery.txt", "prompt_pharmacy.txt"]
+LLM_score_threshold=70
 
 OUTPUT_DIR        = Path(".")       # Root directory (data/ and output/ live here)
 TRANSFORM_SCRIPT  = Path("transform.py")
@@ -37,23 +38,45 @@ APP_CONFIG = {
     }
 }
 
-PRODUCT_QUERY = """
-SELECT e_name, r_product_type
+PRODUCT_QUERY = f"""
+SELECT e_name,e_brand, e_product_type
 FROM `reporting.oltp_merchandise_product_dimensions_{marketplace_id}`
-WHERE r_product_type IS NOT NULL
-Limit 10000
+WHERE e_product_type IS NOT NULL
 """
 
-KEYWORDS_QUERY = """
-SELECT
-  trimmed_keyword,
-  keywords,
-  word_cnt,
-  request,
-  response,
-  (response/request)*100 AS RR
-FROM `reporting.search_queries_{marketplace_id}`
-WHERE date = CURRENT_DATE - 1
+KEYWORDS_QUERY = f"""
+SELECT 
+  os_product_ads_search_query_request_report.marketplace_client_id, 
+  lower(
+    REPLACE( REPLACE( os_product_ads_search_query_request_report.search_query, '[', '' ), ']', '' )
+  ) as keywords, 
+  replace(
+    lower(
+      REPLACE( REPLACE( os_product_ads_search_query_request_report.search_query, '[', '' ), ']', '' )    ), 
+    ' ', 
+    ''
+  ) as trimmed_keywords, 
+  (
+    length(os_product_ads_search_query_request_report.search_query) - 
+    length(REGEXP_REPLACE(os_product_ads_search_query_request_report.search_query, ' ', ''))
+  )  + 1 as word_cnt, 
+  SUM(os_product_ads_search_query_request_report.request) as request_cnt, 
+FROM 
+  reporting.os_product_ads_search_query_request_report, 
+  reporting.clients 
+where 
+  clients.client_id = os_product_ads_search_query_request_report.marketplace_client_id 
+  AND os_product_ads_search_query_request_report.marketplace_client_id = "{marketplace_id}"
+  and os_product_ads_search_query_request_report.date >= CURRENT_DATE() - 3 
+  AND os_product_ads_search_query_request_report.date_hour_utc >= CURRENT_DATE() - 4
+  and os_product_ads_search_query_request_report.date <= CURRENT_DATE() - 1 
+  and os_product_ads_search_query_request_report.search_query is not NULL
+  and os_product_ads_search_query_request_report.search_query <> ''
+GROUP BY 
+  1, 
+  2, 
+  3, 
+  4
 """
 
 LOGGER = LogUtils.configure_console_logger()
@@ -65,7 +88,7 @@ LOGGER = LogUtils.configure_console_logger()
 
 def get_bigquery_client() -> BigQueryServiceClient:
     config = APP_CONFIG["prod"]
-    hades_client = HadesSvcClient(config["APPLICATION"], config_name="prod")
+    hades_client = HadesSvcClient(config["APPLICATION"], env_domain="prod")
     credentials = hades_client.get_app_context_by_app_key(config["BIG_QUERY_APP_KEY"])
     return BigQueryServiceClient(big_query_cred_context=credentials)
 
@@ -120,7 +143,7 @@ def upload_to_s3(input_file: Path, s3_output_path: str) -> None:
         raise ValueError("S3_OUTPUT_PATH must be set when UPLOAD_TO_S3 is True")
 
     config = APP_CONFIG["prod"]
-    hades_client = HadesSvcClient(config["APPLICATION"], config_name="prod")
+    hades_client = HadesSvcClient(config["APPLICATION"], env_domain="prod")
     s3_context = hades_client.get_app_context_by_app_key(config["S3_APP_KEY"])
 
     access_key = s3_context.get("s3_access_key")
