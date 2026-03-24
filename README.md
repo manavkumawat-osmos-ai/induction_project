@@ -1,18 +1,23 @@
-# ETL Pipeline Project
+# ETL Pipeline — Keyword-to-Category Mapping
 
-This project implements an ETL (Extract, Transform, Load) pipeline for processing product feeds and search keywords using BigQuery, transforming data with an LLM, and optionally uploading results to S3.
+An ETL pipeline that maps search keywords to product categories using **Gemini 2.5 Flash Lite** with explicit context caching. It extracts product feed and keyword data from BigQuery, runs LLM-based category mapping, and optionally uploads results to S3.
 
 ## Features
 
-- Extracts product feed data from BigQuery based on marketplace ID
-- Fetches or uses provided search keywords
-- Applies LLM-based transformation to generate category mappings
-- Supports optional upload of results to Amazon S3
+- Extracts product feed and search keywords from BigQuery
+- Supports manual keyword input via CSV file
+- Maps keywords to product categories using Gemini 2.5 Flash Lite with context caching
+- Filters out already-mapped keywords by checking existing S3 data
+- Crash recovery via progress checkpointing
+- Batch processing with configurable batch size and score threshold
+- Token usage tracking and cost estimation
+- Appends new mappings to existing S3 data on upload
 
 ## Prerequisites
 
 - Python 3.8+
-- Access to BigQuery and S3 services via Osmos clients
+- Access to BigQuery and S3 via Osmos clients (`osClient4pyV2`, `osSvcClient4pyV2`, `osUtilsV2`)
+- `GOOGLE_API_KEY` environment variable set for Gemini API access
 - Required Python packages (see `requirements.txt`)
 
 ## Installation
@@ -28,51 +33,91 @@ This project implements an ETL (Extract, Transform, Load) pipeline for processin
    pip install -r requirements.txt
    ```
 
-3. Set up environment variables or configuration as needed for Osmos clients.
-
-## Configuration
-
-Edit the configuration variables in `pipeline.py`:
-
-- `RUN_KEYWORDS_QUERY`: Set to `True` to fetch keywords from BigQuery, or `False` to provide `keywords.csv` manually in the `data/` directory.
-- `marketplace_id`: Required marketplace ID for BigQuery queries (e.g., "100002").
-- `UPLOAD_TO_S3`: Set to `True` to upload results to S3, or `False` to skip.
-- `S3_OUTPUT_PATH`: S3 path for upload (e.g., "s3://bucket/path/to/output.tsv.gz") if `UPLOAD_TO_S3` is `True`.
-- `prompt`: Select a prompt template from `["prompt_e-commerce.txt", "prompt_fashion.txt", "prompt_grocery.txt", "prompt_pharmacy.txt"]`.
+3. Set environment variables:
+   ```bash
+   export GOOGLE_API_KEY="your-gemini-api-key"
+   ```
 
 ## Usage
 
-Run the pipeline:
+The pipeline is driven entirely via CLI arguments:
 
 ```bash
-python pipeline.py
+# Fetch keywords from BigQuery
+python pipeline.py --marketplace-id 100002 --run-keywords-query
+
+# Use a manual keywords CSV file
+python pipeline.py --marketplace-id 100002 --keywords-file data/keywords.csv
+
+# Upload results to S3
+python pipeline.py --marketplace-id 100002 --run-keywords-query --upload-to-s3
+
+# Use a specific prompt template and custom score threshold
+python pipeline.py --marketplace-id 100002 --run-keywords-query --prompt prompt_fashion.txt --llm-score-threshold 80
 ```
+
+### CLI Arguments
+
+| Argument | Required | Default | Description |
+|---|---|---|---|
+| `--marketplace-id` | Yes | — | Marketplace client ID for BigQuery queries |
+| `--env` | No | `prod` | Environment (`test` or `prod`) |
+| `--run-keywords-query` | One of these | — | Fetch keywords from BigQuery |
+| `--keywords-file` | is required | — | Path to a CSV with a `keywords` column |
+| `--upload-to-s3` | No | `False` | Upload output to S3 |
+| `--prompt` | No | `prompt_e-commerce.txt` | Prompt template filename |
+| `--llm-score-threshold` | No | `70` | Minimum LLM confidence score (0–100) |
 
 ## How It Works
 
-1. **Extract**: Fetches product feed data from BigQuery using the specified `marketplace_id` and saves it to `data/product_feed.csv`. If `RUN_KEYWORDS_QUERY` is `True`, also fetches search keywords and appends unique entries to `data/keywords.csv`.
+1. **Extract** — Fetches the product feed from BigQuery using the marketplace ID. Keywords are either queried from BigQuery or loaded from a CSV file. Existing mapped keywords are downloaded from S3 and filtered out to avoid redundant processing.
 
-2. **Transform**: Executes `transform.py`, which uses the selected prompt template and LLM to process the data, generating category mappings saved as `output/query_category_mapping.tsv`.
+2. **Transform** — Unique category paths are extracted from the product feed and assigned IDs. A Gemini context cache is created with the prompt template and category list. Keywords are sent to the LLM in batches, and each keyword is mapped to 0–3 categories with confidence scores. Results below the score threshold are discarded.
 
-3. **Load**: If `UPLOAD_TO_S3` is `True`, compresses the output TSV and uploads it to the specified S3 path. Otherwise, the pipeline completes after transformation.
+3. **Load** — If `--upload-to-s3` is set, new mappings are merged with existing S3 data and uploaded as a gzip-compressed TSV file.
+
+## Configuration
+
+Pipeline constants are centralized in `constants.py`:
+
+| Constant | Value | Description |
+|---|---|---|
+| `BATCH_SIZE` | `20` | Number of keywords per LLM batch |
+| `CACHE_TTL_SECONDS` | `1800s` | Gemini context cache time-to-live |
+| `LLM_SCORE_THRESHOLD` | `70` | Default minimum confidence score |
+| `PROMPT_TEMPLATES` | 4 templates | Available prompt files (e-commerce, fashion, grocery, pharmacy) |
+| `APP_CONFIG` | test/prod | Application, S3, and BigQuery credential keys per environment |
 
 ## Project Structure
 
 ```
 .
-├── pipeline.py          # Main pipeline script
-├── transform.py         # Data transformation logic
+├── pipeline.py          # Main pipeline — CLI parsing, BigQuery/S3 I/O, orchestration
+├── transform.py         # LLM mapping — Gemini context caching, batching, scoring
+├── constants.py         # Centralized configuration and SQL query templates
 ├── requirements.txt     # Python dependencies
-├── .gitignore           # Git ignore rules
-├── data/                # Input data directory
-│   ├── prompt.txt       # Selected prompt template
-│   └── ...              # Other data files (ignored by git)
-└── output/              # Output directory (ignored by git)
-    └── query_category_mapping.tsv
+├── .env                 # Environment variables (GOOGLE_API_KEY)
+├── data/                # Prompt templates and input data
+│   ├── prompt_e-commerce.txt
+│   ├── prompt_fashion.txt
+│   ├── prompt_grocery.txt
+│   └── prompt_pharmacy.txt
+└── output/              # Runtime output (git-ignored)
 ```
+
+## Output Format
+
+The pipeline produces a TSV with three columns:
+
+| Column | Description |
+|---|---|
+| `query` | Original search keyword |
+| `category_path` | Matched product category path |
+| `score` | LLM confidence score (0–100) |
 
 ## Notes
 
-- Large data files in `data/` and `output/` are ignored by Git to keep the repository lightweight.
+- The pipeline operates entirely in memory — no intermediate CSV files are written to disk.
+- Crash recovery is supported via a progress file (`output/.mapping_progress.json`) that is cleaned up on successful completion.
+- The `data/` and `output/` directories are git-ignored to keep the repository lightweight.
 - Ensure proper credentials are configured for BigQuery and S3 access via Osmos clients.
-- The pipeline logs progress and errors to the console.
