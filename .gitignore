@@ -5,7 +5,7 @@ __pycache__/
 .venv/
 .vscode/
 data/product_feed.csv
-data/keywords.csv
+data/search_queries.csv
 output/llm_cache_input.txt
 output/llm_responses.json
 output/query_category_mapping.tsv
